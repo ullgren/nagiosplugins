@@ -1,0 +1,137 @@
+#!/bin/bash
+#
+# Check script for verifying a WS-SOAP request and checking the response for a 
+# regulare expression using grep
+#
+# Copyright (C) 2012 Pontus Ullgren / Redpill Linpro AB
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#  
+GREP="/bin/grep"
+RM="/bin/rm"
+CHMOD="/bin/chmod"
+TOUCH="/bin/touch"
+CAT="/bin/cat"
+TR="/usr/bin/tr"
+WGET="/usr/bin/wget"
+
+. /usr/local/icinga/libexec/utils.sh
+
+print_usage() {
+    echo "Usage: $PROGNAME -H <vhost> -f <requestfile> [-u <uri>] [-p <port>]"
+    echo "          [-P <proto>] [-r <regex>]"
+    echo "Usage: $PROGNAME --help"
+    echo "Usage: $PROGNAME --version"
+}
+
+uri="/"
+proto="http"
+requestfile="/does/not/exist"
+
+while test -n "$1"; do
+    case "$1" in
+        -H)
+            host=$2
+	    shift
+	    ;;
+        -p)
+            port=":$2"
+	    shift
+	    ;;
+        -u)
+            uri=$2
+            shift
+            ;;
+        -P)
+            proto=$2
+            shift
+            ;;
+        -r)
+            regex=$2
+            shift
+            ;;
+        -f)
+            requestfile=$2
+            shift
+            ;;
+        -c)
+            certfile=$2
+            shift
+            ;;
+        -k)
+            keyfile=$2
+            shift
+            ;;
+        --help)
+            print_usage
+            exit $STATE_OK
+            ;;
+          *)
+            echo "Unknown argument: $1"
+            print_usage
+            exit $STATE_UNKNOWN
+            ;;
+    esac
+    shift
+done
+
+if [ ! -f $requestfile ]; then
+    echo "$requestfile does not exist";
+    exit $STATE_CRITICAL;
+fi
+
+# The temporary file that the script should use while
+# processing the log file.
+if [ -x /bin/mktemp ]; then
+    tempout=`/bin/mktemp /tmp/check_wssoap.XXXXXXXXXX`
+else
+    tempout=`/bin/date '+%H%M%S'`
+    tempout="/tmp/check_wssoap.${tempout}"
+    $TOUCH $tempout
+    $CHMOD 600 $tempout
+fi
+
+if [ "x" != "x$certfile" ]; then
+   exptraopt+="$exptraopt --certificate=$certfile";
+fi
+
+if [ "x" != "x$keyfile" ]; then
+   exptraopt="$exptraopt --private-key=$keyfile";
+fi
+
+result=`$WGET --post-file=${requestfile} \
+--header 'Content-Type: text/xml;charset=UTF-8' \
+--no-check-certificate  $exptraopt \
+--output-document=${tempout} \
+${proto}://${host}${port}${uri} > ${tempout}.2 2> ${tempout}.2`
+
+count=`$GREP -c $regex $tempout`
+ 
+if [ "$count" = "0" ]; then # no match, exit with no error
+    echo "Could not find $regex in result"
+    cat ${tempout}.2
+    exitstatus=$STATE_CRITICAL
+else 
+    echo "OK"
+    exitstatus=$STATE_OK
+fi
+
+# Clean up
+$RM -f $tempout
+$RM -f $tempout.2
+
+
+exit $exitstatus
+
