@@ -1,0 +1,144 @@
+#! /usr/bin/perl -w
+
+# check_service_state.pl Copyright (C) 2011 Pontus Ullgren <pontus.ullgren@redpill-linpro.com>
+#
+# Checks the status of one or more other services.
+#
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty
+# of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# you should have received a copy of the GNU General Public License
+# along with this program (or with Nagios);  if not, write to the
+# Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+# Boston, MA 02111-1307, USA
+
+use strict;
+use Nagios::StatusLog;
+use English;
+use Getopt::Long;
+use vars qw($PROGNAME);
+use lib "/usr/lib/nagios/plugins";
+use utils qw (%ERRORS &print_revision &support);
+use Data::Dumper;
+
+sub print_help ();
+sub print_usage ();
+sub print_version();
+
+my ($opt_s, $opt_x, $opt_a, $opt_o, $opt_f, $opt_h, $opt_V);
+my ($result, $message, $log, $svc_stat, @service_fields, $sum_state);
+my ($host_name, $service_name, $max_state);
+my %RERRORS = reverse %ERRORS;
+my $STATUS_LOG="/var/lib/icinga/status.dat";
+
+$PROGNAME="check_service_state";
+
+$opt_x = 0;
+$opt_a = 1;
+$opt_o = 0;
+$opt_f = $STATUS_LOG;
+$max_state = 0;
+
+Getopt::Long::Configure('bundling');
+GetOptions(
+	"V"   => \$opt_V, "version"	=> \$opt_V,
+	"h"   => \$opt_h, "help"	=> \$opt_h,
+	"s=s" => \$opt_s, "service"	=> \$opt_s,
+	"f=s" => \$opt_f, "file"	=> \$opt_f,
+	"x" => \$opt_x, "xor" => \$opt_x,
+	"a" => \$opt_a, "and" => \$opt_a,
+	"o" => \$opt_o, "or" => \$opt_o,
+	);
+
+if ($opt_V) {
+	print_version();
+	exit $ERRORS{'OK'};
+}
+
+if ($opt_h) {
+	print_help();
+	exit $ERRORS{'OK'};
+}
+
+if (! $opt_s) {
+	print "SERVICE UNKNOWN: No services specified\n";
+	exit $ERRORS{'UNKNOWN'};
+}
+
+
+$log = Nagios::StatusLog->new(
+               Filename => $opt_f,
+               Version  => 3.0
+          );
+
+$result = 0;
+
+@service_fields = split(/,/,  $opt_s);
+if ( $opt_o ) {
+	$sum_state = 0;
+} elsif ( $opt_a ) {
+	$sum_state = 1;
+}
+
+
+while($#service_fields > 0) {
+	$host_name = shift @service_fields;
+	$service_name = shift @service_fields;
+	$svc_stat = $log->service( $host_name, $service_name);
+	if ( $opt_o ) {
+		$sum_state |= ($svc_stat->current_state()>0?1:0);
+	} elsif ( $opt_x ) {
+		$sum_state ^= ($svc_stat->current_state()>0?1:0);
+	} elsif ( $opt_a ) {
+		$sum_state &= ($svc_stat->current_state()>0?1:0);
+	}
+        $message .= $host_name.':'.$service_name.'='.$svc_stat->status().', ';
+	if ( $svc_stat->current_state() > $max_state ) {
+		$max_state = $svc_stat->current_state();
+	}
+}
+
+if ($sum_state) {
+	$result = $max_state;
+}
+
+print "SERVICE_STATE $RERRORS{$result}: $message\n";
+exit $result;
+
+sub print_version () {
+	print $PROGNAME," 0.0.1\n";
+        print "This nagios plugins come with ABSOLUTELY NO WARRANTY. You may redistribute\n",
+	"copies of the plugins under the terms of the GNU General Public License.\n",
+	"For more information about these matters, see the file named COPYING.\n";
+}
+sub print_usage () {
+	print "Usage:\n";
+	print "  $PROGNAME [-x] [-a] [-o] -s <servicelist>\n";
+	print "  $PROGNAME [-h | --help]\n";
+	print "  $PROGNAME [-V | --version]\n";
+}
+
+sub print_help () {
+	print_revision($PROGNAME, '0.0.1');
+	print "Copyright (c) 2011 Pontus Ullgren\n\n";
+	print_usage();
+	print "\n";
+	print "Options:\n";
+	print " -h, --help\n\t\nPrint detailed help screen\n";
+	print " -V, --version\n\t\nPrint version information\n";
+	print " -s, --service=SERVICELIST\n\tThis is a list of the descriptions of services (and the names of their corresponding hosts) that should be included in this check. Example: \"<host>,<service1>,<host>,<service2>\"\n";
+	print " -a, --and\n\tEvaluate if we should fail the test based on AND logic of all services status.\n";
+	print " -o, --or\n\tEvaluate if we should fail the test based on AND logic of all services status.\n";
+	print " -x, --xor\n\tEvaluate if we should fail the test based on XOR logic of all services status.\n";
+	print "\n";
+	print "If the script determins that the check should fail the highets error level of the dependent services will be returned.\n";
+	# support();
+}
